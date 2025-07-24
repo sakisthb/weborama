@@ -350,9 +350,9 @@ export class MockAuthService {
   constructor() {
     this.loadPersistedAuth();
     
-    // Auto-login in development mode if no auth found
-    if (!this.currentUser && import.meta.env.DEV) {
-      console.log('🔧 Auto-logging in development mode...');
+    // Auto-login in development mode OR production demo mode if no auth found
+    if (!this.currentUser && (import.meta.env.DEV || import.meta.env.VITE_DEMO_MODE === 'true')) {
+      console.log('🔧 Auto-logging in demo mode...');
       this.autoLoginDevelopment();
     }
   }
