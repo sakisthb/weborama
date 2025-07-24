@@ -1,6 +1,6 @@
 [build]
   publish = "dist"
-  command = "npm install --legacy-peer-deps && ./node_modules/.bin/vite build && cp -r public/* dist/"
+  command = "npm install && npm run build && cp -r public/* dist/"
 
 [build.environment]
   NODE_VERSION = "20"
