@@ -1,10 +1,10 @@
 [build]
   publish = "dist"
-  command = "npm install --legacy-peer-deps && npx vite build && cp -r public/* dist/"
+  command = "npm ci --legacy-peer-deps && npm run build && cp -r public/* dist/"
 
 [build.environment]
-  NODE_VERSION = "18"
-  NPM_VERSION = "8"
+  NODE_VERSION = "20"
+  NPM_VERSION = "10"
   NODE_ENV = "production"
   VITE_ENVIRONMENT = "production"
   VITE_DEMO_MODE = "true"
