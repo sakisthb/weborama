@@ -1,0 +1,280 @@
+# Docker Compose for Ads Pro Platform - Option D Implementation
+# Multi-environment support for development, staging, and production
+
+version: '3.8'
+
+services:
+  # ===================================
+  # APPLICATION SERVICES
+  # ===================================
+  
+  # Development application
+  app-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+      args:
+        NODE_VERSION: 20
+        BUILD_DATE: ${BUILD_DATE:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}
+        VCS_REF: ${VCS_REF:-$(git rev-parse HEAD)}
+        VERSION: ${VERSION:-development}
+    container_name: ads-pro-platform-dev
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=development
+      - VITE_APP_VERSION=${VERSION:-development}
+      - VITE_SUPABASE_URL=${VITE_SUPABASE_URL}
+      - VITE_SUPABASE_ANON_KEY=${VITE_SUPABASE_ANON_KEY}
+    volumes:
+      - .:/app
+      - /app/node_modules
+      - /app/.next
+    networks:
+      - ads-pro-network
+    profiles:
+      - development
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Production application
+  app-prod:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: nginx
+      args:
+        NODE_VERSION: 20
+        BUILD_DATE: ${BUILD_DATE:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}
+        VCS_REF: ${VCS_REF:-$(git rev-parse HEAD)}
+        VERSION: ${VERSION:-latest}
+    container_name: ads-pro-platform-prod
+    ports:
+      - "8080:8080"
+    environment:
+      - NODE_ENV=production
+    networks:
+      - ads-pro-network
+    profiles:
+      - production
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # ===================================
+  # DATABASE SERVICES
+  # ===================================
+  
+  # PostgreSQL database for local development
+  postgres:
+    image: postgres:15-alpine
+    container_name: ads-pro-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ads_pro_platform}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    networks:
+      - ads-pro-network
+    profiles:
+      - development
+      - testing
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-ads_pro_platform}"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # Redis for caching and session management
+  redis:
+    image: redis:7-alpine
+    container_name: ads-pro-redis
+    ports:
+      - "6379:6379"
+    command: redis-server --requirepass ${REDIS_PASSWORD:-redis123} --appendonly yes
+    volumes:
+      - redis_data:/data
+      - ./redis.conf:/usr/local/etc/redis/redis.conf:ro
+    networks:
+      - ads-pro-network
+    profiles:
+      - development
+      - testing
+      - production
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # ===================================
+  # MONITORING AND OBSERVABILITY
+  # ===================================
+  
+  # Prometheus for metrics collection
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: ads-pro-prometheus
+    ports:
+      - "9090:9090"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    networks:
+      - ads-pro-network
+    profiles:
+      - monitoring
+    restart: unless-stopped
+
+  # Grafana for metrics visualization
+  grafana:
+    image: grafana/grafana:latest
+    container_name: ads-pro-grafana
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning/:/etc/grafana/provisioning/
+    networks:
+      - ads-pro-network
+    profiles:
+      - monitoring
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+
+  # Jaeger for distributed tracing
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: ads-pro-jaeger
+    ports:
+      - "16686:16686"
+      - "14268:14268"
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    networks:
+      - ads-pro-network
+    profiles:
+      - monitoring
+    restart: unless-stopped
+
+  # ===================================
+  # TESTING SERVICES
+  # ===================================
+  
+  # Test runner container
+  test-runner:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    container_name: ads-pro-test-runner
+    environment:
+      - NODE_ENV=test
+      - CI=true
+    volumes:
+      - .:/app
+      - /app/node_modules
+    networks:
+      - ads-pro-network
+    profiles:
+      - testing
+    command: pnpm test
+    depends_on:
+      - postgres
+      - redis
+
+  # E2E testing with Playwright
+  e2e-tests:
+    build:
+      context: .
+      dockerfile: Dockerfile.e2e
+    container_name: ads-pro-e2e
+    environment:
+      - NODE_ENV=test
+      - BASE_URL=http://app-dev:3000
+    volumes:
+      - ./tests/e2e:/app/tests/e2e
+      - ./test-results:/app/test-results
+    networks:
+      - ads-pro-network
+    profiles:
+      - testing
+    depends_on:
+      - app-dev
+
+  # ===================================
+  # REVERSE PROXY AND LOAD BALANCER
+  # ===================================
+  
+  # NGINX reverse proxy
+  nginx-proxy:
+    image: nginx:1.25-alpine
+    container_name: ads-pro-nginx-proxy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./ssl:/etc/nginx/ssl:ro
+    networks:
+      - ads-pro-network
+    profiles:
+      - production
+    restart: unless-stopped
+    depends_on:
+      - app-prod
+
+# ===================================
+# NETWORKS
+# ===================================
+networks:
+  ads-pro-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+# ===================================
+# VOLUMES
+# ===================================
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
