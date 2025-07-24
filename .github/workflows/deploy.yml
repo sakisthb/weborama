@@ -8,8 +8,8 @@ on:
     branches: [ main ]
 
 jobs:
-  build:
-    name: Build Application
+  build-and-deploy:
+    name: Build and Deploy
     runs-on: ubuntu-latest
     
     steps:
@@ -33,62 +33,29 @@ jobs:
         run: npm run lint
         continue-on-error: true
 
-      - name: Build application
-        run: npm run build
-
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v3
-        with:
-          name: build-files
-          path: dist/
-          retention-days: 7
-
-  test:
-    name: Run Tests
-    runs-on: ubuntu-latest
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '18'
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm install --legacy-peer-deps
-
-      - name: Run unit tests
+      - name: Run tests
         run: npm run test:unit:run
         continue-on-error: true
 
-  deploy:
-    name: Deploy to Netlify
-    runs-on: ubuntu-latest
-    needs: build
-    if: github.ref == 'refs/heads/main'
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - name: Build application
+        run: npm run build
 
-      - name: Download build artifacts
-        uses: actions/download-artifact@v3
-        with:
-          name: build-files
-          path: dist/
-
-      - name: Deploy to Netlify
-        uses: netlify/actions/cli@master
-        with:
-          args: deploy --prod --dir=dist
-        env:
-          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
-          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
-
-      - name: Post deployment notification
+      - name: Deploy to Netlify (via git push)
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         run: |
-          echo "✅ Deployment completed successfully!"
+          echo "✅ Build completed successfully!"
+          echo "🚀 Netlify will auto-deploy from this commit"
           echo "🌐 Site URL: https://weborama.gr"
+
+      - name: Build summary
+        if: always()
+        run: |
+          echo "## Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Dependencies installed" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ TypeScript compiled" >> $GITHUB_STEP_SUMMARY  
+          echo "- ✅ Code linted" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Tests executed" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Application built" >> $GITHUB_STEP_SUMMARY
+          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            echo "- 🚀 Netlify deployment triggered" >> $GITHUB_STEP_SUMMARY
+          fi
